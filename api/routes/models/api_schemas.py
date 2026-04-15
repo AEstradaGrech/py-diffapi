@@ -16,14 +16,6 @@ class QueryFilter(BaseModel):
         arbitrary_types_allowed=True
     )
   
-class GenerateImageResponse(BaseModel):
-    name: str = Field(description="Name of the image file. A guid will be used instead if no name is provided")
-    diffuser: str = Field(description="The name of the diffuser or inference endpoint to use")
-    prompt: str = Field(description="The text that will be used to generate the image")
-    height: float = Field(description="Height of the images that will be generated")
-    width: float = Field(description="Width of the images that will be generated")
-    base64: str = Field(description="image in base64 format")
-
 class GeneratedImageDto(BaseModel):
     id:str = Field(description="Db identifier for the image")
     name: str = Field(description="Name of the image file. A guid will be used instead if no name is provided")
@@ -36,6 +28,16 @@ class GeneratedImageDto(BaseModel):
     tag: Optional[str] = Field(None, description="Tags a chat session with something meaningful for the user to provide more context about the image")
     base64: str = Field(description="image in base64 format")
     
+
+class GenerateImageResponse(BaseModel):
+    name: str = Field(description="Name of the image file. A guid will be used instead if no name is provided")
+    diffuser: str = Field(description="The name of the diffuser or inference endpoint to use")
+    prompt: str = Field(description="The text that will be used to generate the image")
+    height: float = Field(description="Height of the images that will be generated")
+    width: float = Field(description="Width of the images that will be generated")
+    db_doc: Optional[GeneratedImageDto] = Field(description="Representation of the document saved in db (if db_save = True)")
+    base64:str = Field(description="Base 64 string representation of the generated image")
+
 class PatchImageRequest(BaseModel):
     id:str = Field(description="Db identifier for the image")
     name: Optional[str] = Field(description="Name of the image file", default=None)

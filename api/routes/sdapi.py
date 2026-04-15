@@ -21,7 +21,7 @@ router = APIRouter(prefix="/stablediffusion")
         200:{"description":"Successful response with the generated image in base64 format, the name and the promt used to generate the image"}
     }
 )
-async def generate_from_prompt(req: StableDiffusionImageRequest, request:Request) -> List[GenerateImageResponse]:
+async def generate_from_prompt(req: StableDiffusionImageRequest, request:Request) -> GenerateImageResponse:
     logger.info('-- on prompt req -- ')
     print(req)
     svc = ImagesMgmtService()
@@ -30,7 +30,9 @@ async def generate_from_prompt(req: StableDiffusionImageRequest, request:Request
         raise HTTPLoggedException(status_code=500, detail="An error has occured while accessing the diffusor integration")
     current_req = req if not req.use_refiner else GenerateRefinedImageRequest(name=req.name, diffuser=req.diffuser_name, prompt=req.prompt, inference_steps=req.inference_steps, guidance=req.guidance, file_save=req.file_save, db_save=req.db_save, cache_diffusion_pipe=req.cache_diffusion_pipe)
     image = diffusor.refined_pipe(current_req) if req.use_refiner else diffusor.generate_image(current_req)
-    return [] if image is None else [await svc.save_request(req=req, generated_image=image)]
+    if image is None:
+        raise HTTPLoggedException("-- an error has occured while generating the image --")
+    return await svc.save_request(req=req, generated_image=image)
 
 @router.post(
     "/refined-pipe/prompt/generate",
@@ -39,7 +41,7 @@ async def generate_from_prompt(req: StableDiffusionImageRequest, request:Request
         200:{"description":"Successful response with the generated image in base64 format, the name and the promt used to generate the image"}
     }
 )
-async def generate_refined_from_prompt(req: GenerateRefinedImageRequest, request:Request) -> List[GenerateImageResponse]:
+async def generate_refined_from_prompt(req: GenerateRefinedImageRequest, request:Request) -> GenerateImageResponse:
     logger.info('-- on refined pipe prompt req -- ')
     print(req)
     svc = ImagesMgmtService()
@@ -48,7 +50,9 @@ async def generate_refined_from_prompt(req: GenerateRefinedImageRequest, request
         raise HTTPLoggedException(status_code=500, detail="An error has occured while accessing the diffusor integration")
     logger.info("-- ON REFINED PIPE GENERATE IMAGE ENDPOINT HIT --")    
     image = diffusor.refined_pipe(req)
-    return [] if image is None else [await svc.save_request(req=req, generated_image=image)]
+    if image is None:
+        raise HTTPLoggedException("-- an error has occured while generating the image --")
+    return await svc.save_request(req=req, generated_image=image)
 
 def get_sd_provider(request:Request) -> SD_Integration:
     if request.app.model_provider.is_available() is False:
