@@ -15,9 +15,15 @@ class QueryFilter(BaseModel):
     model_config = ConfigDict(
         arbitrary_types_allowed=True
     )
-  
+
+class CollectionResponse(BaseModel):
+    data: List[Any] = Field(description="An array with the requested data", default=[])
+    total_records: int = Field(description="Total documents matching the current query", default=None)
+    page:int = Field(description="The current page. Index begins in 0 (the last page will be always 'total_pages -1')", default=None)
+    total_pages:int = Field(description="Number of pages available for the current query", default=None)
+
 class GeneratedImageDto(BaseModel):
-    id:str = Field(description="Db identifier for the image")
+    id:Optional[str] = Field(description="Db identifier for the image", default=None)
     name: str = Field(description="Name of the image file. A guid will be used instead if no name is provided")
     diffuser: str = Field(description="The name of the diffuser or inference endpoint to use")
     prompt: str = Field(description="The text that will be used to generate the image")
@@ -42,3 +48,7 @@ class PatchImageRequest(BaseModel):
     id:str = Field(description="Db identifier for the image")
     name: Optional[str] = Field(description="Name of the image file", default=None)
     tag: Optional[str] = Field(description="New tag for the image record", default=None)
+
+class FileSaveResponse(BaseModel):
+    filename: str = Field(description="Name of the image file")
+    output_path: str = Field(description="relative path to the file")

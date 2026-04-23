@@ -1,14 +1,16 @@
 
 from datetime import datetime
+import math
+from typing import List
 from uuid import uuid4
 from PIL import Image
 from api.diffusion_module.schemas import GenerateImageRequest
 from api.infrastructure.repositories.mongo_repositories import GenImagesRepository
 from api.infrastructure.models.db_schemas import GeneratedImageDoc
-from api.routes.models.api_schemas import  GenerateImageResponse, GeneratedImageDto
-from api.utils.mappers import generatedImageToDto
+from api.routes.models.api_schemas import  CollectionResponse, FileSaveResponse, GenerateImageResponse, GeneratedImageDto, PatchImageRequest, QueryFilter
+from api.utils.mappers import generatedImageToDto, imageDtoToDocument
 from api.utils.statics import default_db_name
-from api.utils.helpers import pil_to_base64
+from api.utils.helpers import HTTPLoggedException, pil_to_base64, base64_to_pil
 from loguru import logger
 
 class ImagesMgmtService:
@@ -77,3 +79,68 @@ class ImagesMgmtService:
             if png_filename is not None:
                 logger.info(f"-- request generated image saved to PNG file >> FILENAME {png_filename} --")
         return GenerateImageResponse(name=req.name, diffuser=req.diffuser_name, prompt=req.prompt, height=req.height, width=req.width, db_doc=dto, base64=pil_to_base64(generated_image))
+    
+    async def save_image(self, dto: GeneratedImageDto) -> GeneratedImageDto:
+        if dto.base64 is None:
+            raise HTTPLoggedException(status_code=400, detail="No Base64 string to save")
+        dto.id = None
+        return generatedImageToDto(await self._repo.create(imageDtoToDocument(dto)))
+
+    async def file_save_image(self, dto: GeneratedImageDto) -> FileSaveResponse:
+        if dto.base64 == "":
+            dto.base64 = None
+        if dto.base64 is None:
+            raise HTTPLoggedException(status_code=400, detail="No Base64 string to convert")
+        if dto.name == "":
+            dto.name = None
+        filename = dto.name if dto.name is not None else uuid4()
+        if dto.tag is not None and dto.tag != "":
+            filename = f"{filename}-{dto.tag}"
+        image = base64_to_pil(dto.base64)
+        filepath = f"generated_images/{filename}.png"
+        image.save(filepath)
+        return FileSaveResponse(filename=filename, output_path=filepath)
+
+    async def query_images(self, filter: QueryFilter) -> List[GeneratedImageDto]:
+        docs = await self._repo.query(filter.conditions) if len(filter.conditions) > 0 else await self._repo.stringy_query({})
+        results = []
+        if len(docs) > 0:
+            if filter.page is None and filter.page_size is None:
+                results = [generatedImageToDto(doc) for doc in docs]
+                return CollectionResponse(data=results, page=0, total_pages=1, total_records=len(docs))
+            if filter.page_size is None:
+                filter.page_size = 10
+            for i in range(filter.page * filter.page_size, filter.page * filter.page_size + filter.page_size):
+                if i < len(docs):
+                    results.append(generatedImageToDto(docs[i]))
+            pages = math.ceil(len(docs) / filter.page_size) if len(docs) > 0 else 0
+            return CollectionResponse(data=results, page=filter.page, total_pages=pages, total_records=len(docs))
+        return CollectionResponse(data=results, page=0, total_pages=0, total_records=0)
+
+    async def delete_image(self, id: str) -> GeneratedImageDto:
+        record = await self._repo.get_by_id(id=id)
+        if record is None:
+            raise HTTPLoggedException(status_code=404, detail=f"No document has been found with ID: {id}")
+        if not await self._repo.delete_by_id(id=id):
+            raise HTTPLoggedException(status_code=500, detail="An error has occured while deleting the document")
+        return generatedImageToDto(record)
+
+    async def patch_image(self, patch_req: PatchImageRequest) -> GeneratedImageDto:
+        record = await self._repo.get_by_id(id=patch_req.id)
+        if record is None:
+            raise HTTPLoggedException(status_code=404, detail=f"No document has been found with ID: {patch_req.id}")
+        doc = GeneratedImageDoc.model_validate(record)
+        doc.name = patch_req.name
+        doc.tag = patch_req.tag
+        if not await self._repo.update(doc.id, doc):
+            raise HTTPLoggedException(status_code=500, detail=f"An error has occured while updating the document with ID: {doc.id}")
+        return generatedImageToDto(doc)
+    
+    async def update_image(self, dto: GeneratedImageDto) -> GeneratedImageDto:
+        record = await self._repo.get_by_id(id=dto.id)
+        if record is None:
+            raise HTTPLoggedException(status_code=404, detail=f"No document has been found with ID: {dto.id}")
+        doc = imageDtoToDocument(dto)
+        if not await self._repo.update(dto.id, doc):
+            raise HTTPLoggedException(status_code=500, detail=f"An error has occured while updating the document with ID: {dto.id}")
+        return dto

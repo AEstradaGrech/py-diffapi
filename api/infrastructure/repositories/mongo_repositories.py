@@ -44,7 +44,10 @@ class MongoRepository(Generic[T], ABC):
     async def query(self, conditions: List[QueryCondition]) -> list[T]:
         query = {"$and": []}
         for condition in conditions:
-            query["$and"].append({condition.field : condition.value})
+            query_condition = {condition.field : condition.value}
+            if condition.field.lower() == "id" or condition.field == "_id":
+                query_condition = { "_id" : ObjectId(condition.value)}
+            query["$and"].append(query_condition)
             print("-- CURRENT QUERY --", query)
         return [doc for doc in self.collection.find(query)]
     
