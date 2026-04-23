@@ -21,18 +21,30 @@ router = APIRouter(prefix="/stablediffusion")
         200:{"description":"Successful response with the generated image in base64 format, the name and the promt used to generate the image"}
     }
 )
-async def generate_from_prompt(req: StableDiffusionImageRequest, request:Request) -> GenerateImageResponse:
+async def generate_from_prompt(req: StableDiffusionImageRequest, request:Request) -> List[GenerateImageResponse]:
     logger.info('-- on prompt req -- ')
     print(req)
     svc = ImagesMgmtService()
     diffusor: SD_Integration = get_sd_provider(request)
     if diffusor is None:
         raise HTTPLoggedException(status_code=500, detail="An error has occured while accessing the diffusor integration")
-    current_req = req if not req.use_refiner else GenerateRefinedImageRequest(name=req.name, diffuser=req.diffuser_name, prompt=req.prompt, inference_steps=req.inference_steps, guidance=req.guidance, file_save=req.file_save, db_save=req.db_save, cache_diffusion_pipe=req.cache_diffusion_pipe)
-    image = diffusor.refined_pipe(current_req) if req.use_refiner else diffusor.generate_image(current_req)
-    if image is None:
+    current_req = req if not req.use_refiner else GenerateRefinedImageRequest(
+        name=req.name, 
+        diffuser=req.diffuser_name, 
+        prompt=req.prompt, 
+        num_gen=req.num_gen,
+        inference_steps=req.inference_steps, 
+        guidance=req.guidance,
+        file_save=req.file_save, 
+        db_save=req.db_save, 
+        cache_diffusion_pipe=req.cache_diffusion_pipe)
+    images = diffusor.refined_pipe(current_req) if req.use_refiner else diffusor.generate_image(current_req)
+    if len(images) == 0:
         raise HTTPLoggedException("-- an error has occured while generating the image --")
-    return await svc.save_request(req=req, generated_image=image)
+    results = []
+    for idx in range(len(images)):
+        results.append(await svc.save_request(req=req, generated_image=images[idx], extra_tag=f"{idx}"))
+    return results    
 
 @router.post(
     "/refined-pipe/prompt/generate",

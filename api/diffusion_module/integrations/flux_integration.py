@@ -31,6 +31,13 @@ class Flux_Integration(ModelIntegration):
         if free_resources:
             self.free_resources()
 
+    """
+    Recommended Minimum Guidance Settings:
+    Best Overall for Dev: 3.5 is the generally recommended default for balanced, high-quality results in FLUX.1-dev.
+    Best for Photorealism: A lower range of 2.0 to 2.2 is recommended to achieve the best photographic quality, reducing the "ai-vibrant" look.
+    Best for Creative/Painterly Styles: A range of 1.0 to 1.5 is suggested, allowing for softer, more artistic results with fewer "computer-generated" artifacts.
+    FLUX.1-schnell: This model works best with 1.0 (or disabled) guidance, as it is highly distilled. 
+    """
     @override
     def generate_image(self, req: GenerateImageRequest, device:str = "cuda") -> Any:
         try:
@@ -42,15 +49,15 @@ class Flux_Integration(ModelIntegration):
             if req.seed is not None and req.seed < 0:
                 req.seed = None
             prompt = req.prompt
-            image = pipe(
+            return pipe(
                 prompt=prompt,
                 height=req.height,
                 width=req.width,
                 guidance_scale=req.guidance,
+                num_images_per_prompt=req.num_gen if req.num_gen > 0 else 1,
                 num_inference_steps=req.inference_steps,
                 generator=torch.Generator(device=target_device).manual_seed(req.seed) if req.seed is not None else None
-            ).images[0]
-            return image
+            ).images
         except Exception as e:
             logger.error(f"-- an error has occured while trying to generate an image with Flux integration: {e} --")
             raise HTTPLoggedException(status_code=500, detail=f"-- Flux Integration >> An error has occured while trying to generate the image --")

@@ -87,9 +87,7 @@ class ModelProvider(metaclass=Singleton):
                         self.integration = SD_Integration(cache_default_model=True, enable_cpu_offload=request.with_auto_offload, quant_type=request.quantization)
                     self.current_integration_name = request.name
                 else:
-                    if request.cache_model is not None:
-                        logger.info(f"-- updating {request.name} integration cached model --")
-                        self.integration.load_and_cache_model(model=request.cache_model, device=request.target_device, with_auto_offload=request.with_auto_offload, quantization=request.quantization)
+                    self._update_integration_model(request)
             case "flux":
                 if isinstance(self.integration, Flux_Integration) is False:
                     logger.warning("-- setting up FLUX integration >> clearing cache --")
@@ -105,9 +103,7 @@ class ModelProvider(metaclass=Singleton):
                         self.integration = Flux_Integration(cache_default_model=True, enable_cpu_offload=request.with_auto_offload, quant_type=request.quantization)
                     self.current_integration_name = request.name
                 else:
-                    if request.cache_model is not None:
-                        logger.info(f"-- updating {request.name} integration cached model --")
-                        self.integration.load_and_cache_model(model=request.cache_model, device=request.target_device, with_auto_offload=request.with_auto_offload, quantization=request.quantization)
+                    self._update_integration_model(request)
         self.init = True if self.integration is not None else False
         if self.init:
             logger.info(f"-- MODEL PROVIDER >> INTEGRATION: {self.current_integration_name} --")
@@ -130,4 +126,13 @@ class ModelProvider(metaclass=Singleton):
         self.current_integration_name = None
         self.init = False
 
-      
+    def _update_integration_model(self, request: SetProviderRequest):
+        if self.integration is None:
+            raise HTTPLoggedException(status_code=500, detail="No integration instance found")
+        if request.cache_model == "":
+            request.cache_model = None
+        if request.cache_model is None:
+            request.cache_model = self.integration.default_integration_model
+        if request.cache_model is not None:
+            logger.info(f"-- updating {request.name} integration cached model --")
+            self.integration.load_and_cache_model(model=request.cache_model, device=request.target_device, with_auto_offload=request.with_auto_offload, quantization=request.quantization)

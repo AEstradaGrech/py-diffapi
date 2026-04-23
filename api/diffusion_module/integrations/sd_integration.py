@@ -73,7 +73,7 @@ class SD_Integration(ModelIntegration):
             params = {
                 "file_name": req.name,
                 "guidance": req.guidance,
-                "inference_steps": 50 if req.inference_steps <= 0 else req.inference_steps,
+                "inference_steps": 20 if req.inference_steps <= 0 else req.inference_steps,
                 "height": req.height,
                 "width": req.width,
                 "img_num": req.num_gen,
@@ -84,7 +84,10 @@ class SD_Integration(ModelIntegration):
             target_device = torch.device(device_name)
             #adapt torch bfloat type to stablediffusion3 models
             torch_dtype = torch.bfloat16 if target_device.type == "cuda" else torch.float32
-
+            
+            if "stable-diffusion-3" in req.diffuser_name and req.diffuser_name != self.cached_model:
+                logger.warning(f"-- Loading 'stable-diffusion-3' model >> setting AUTO_OFFLOAD ON --")
+                self._enable_auto_offload = True
             pipe: DiffusionPipeline = self._get_pipe_for_request(req)
             
             if pipe is None:
@@ -112,9 +115,9 @@ class SD_Integration(ModelIntegration):
                     height=params["height"],
                     width=params["width"],
                     num_images_per_prompt=params["img_num"],
-                    generator=None,
+                    generator=generator,
                 )
-            return output.images[0] if len(output.images) > 0 else None
+            return output.images
         except Exception as e:
             logger.error(f"An error has occured while generating SD image >> Exception: {e}")
             raise HTTPLoggedException(status_code=500, detail="An error has occured while generating image")
@@ -129,6 +132,10 @@ class SD_Integration(ModelIntegration):
         try:
             if req.seed == -1:
                 req.seed = None
+            if req.inference_steps <= 0:
+                req.inference_steps = 1
+            if req.num_gen <= 0:
+                req.num_gen = 1
             target_device = device if device == "cuda" and torch.cuda.is_available() else "cpu"
             n_steps = req.inference_steps
             guidance = req.guidance
@@ -155,13 +162,30 @@ class SD_Integration(ModelIntegration):
             # ============================================================
             high_noise_frac = req.denoising_split_fraction
             
-            if self._cached_refiner is None or self._cached_pipe is None or self.cached_model != "stabilityai/stable-diffusion-xl-base-1.0":
-                logger.info("-- SDXL refiner pipe not available >> caching SDXL refiner pipe components --")
-                self.clear_cache()
-                self._cache_sdxl_refiner_pipe()
-            if self._cached_refiner is None:
-                raise HTTPLoggedException(status_code=500, detail="-- an error has occured while caching the SDXL refiner pipe --")
-            
+            pipe = None
+            refiner = None
+            if req.cache_diffusion_pipe:
+                if self._cached_pipe is None or self._cached_refiner is None or self.cached_model != "stabilityai/stable-diffusion-xl-base-1.0":
+                    logger.info("-- SDXL refiner pipe not available >> caching SDXL refiner pipe components --")
+                    self.clear_cache()
+                    self._cache_sdxl_refiner_pipe()
+                    if self._cached_pipe is None or self._cached_refiner is None:
+                        raise HTTPLoggedException(status_code=500, detail="-- an error has occured while caching the SDXL refiner pipe --")
+                pipe = self._cached_pipe
+                refiner = self._cached_refiner
+            else:
+                logger.info("-- loading uncached SDXL pipe --")
+                try:
+                    logger.warning("-- loading SDXL pipe >> clearing cached resources --")
+                    self.clear_cache()
+                    vae = self.load_vae(model=default_sdxl_vae,target_device=target_device)
+                    pipe = self.load_sdxl_pipe(vae=vae, target_device=target_device)
+                    refiner = self.load_refiner(vae=vae, target_device=target_device)
+                    self._apply_pipe_optimizations(pipe=pipe, target_device=target_device)
+                    self._apply_pipe_optimizations(pipe=refiner, target_device=target_device)    
+                except Exception as e:
+                    logger.error(f"-- An error has occured while loading the refiner pipe -- Exception: {e}")
+                    raise HTTPLoggedException(status_code=500, detail="An error has occured while loading the SDXL refiner")
             prompt = req.prompt
             
             # ============================================================
@@ -198,9 +222,10 @@ class SD_Integration(ModelIntegration):
             #   - Excessive negative prompts (>50 tokens) can hurt quality
             # ============================================================
             logger.info(f"-- STAGE 1: Base model denoising (0% -> {high_noise_frac*100}%) --")
-            image = self._cached_pipe(
+            image = pipe(
                 prompt=prompt, 
                 num_inference_steps=n_steps,
+                num_images_per_prompt=req.num_gen,
                 guidance_scale=guidance,  # ⚠️ Keep between 5.0-8.5 for best quality
                 width=width,
                 height=height,
@@ -209,7 +234,7 @@ class SD_Integration(ModelIntegration):
                 denoising_end=high_noise_frac,  # Stop at 70% - pass to refiner
                 output_type="latent"  # Return latent format (efficient for stage 2)
             ).images
-            
+
             # ============================================================
             # STAGE 2: Refiner Model - Quality Enhancement
             # ============================================================
@@ -240,23 +265,25 @@ class SD_Integration(ModelIntegration):
             #   - Still useful for "clean up" specific unwanted elements
             # ============================================================
             logger.info(f"-- STAGE 2: Refiner model ({high_noise_frac*100}% -> 100%) --")
-            image = self._cached_refiner(
+            images = refiner(
                 prompt=prompt, 
                 num_inference_steps=n_steps, 
                 guidance_scale=refiner_guidance,  # ⚠️ Consider reducing to 5.0-6.5 for refiner
                 width=width,
                 height=height,
                 generator=None if req.with_random_refiner_seed else generator,  # Must match base model generator for consistency
-                negative_prompt=refiner_neg_prompt, 
+                negative_prompt=refiner_neg_prompt,
+                num_images_per_prompt=req.num_gen, 
                 denoising_start=high_noise_frac,  # Start from where base ended (70%)
                 image=image  # Takes latent from base, refines it
-            ).images[0]
+            ).images
+            #logger.warning(f"-- ON REFINER RESULT {type(image)} --")
             
             if free_resources:
                 self.free_resources(device=target_device)
             
-            logger.info("-- REFINED PIPE COMPLETE --")
-            return image
+            logger.info(f"-- REFINED PIPE COMPLETE >> REQ IMAGES: {req.num_gen} >> NUM IMAGES: {len(images)} --")
+            return images
         except Exception as e:
             logger.error(f"-- An error has occured while infering the SDXL refiner pipe >> Exception: {e}")
             raise HTTPLoggedException(status_code=500, detail="An error has occured while infering the refined SDXL pipe")

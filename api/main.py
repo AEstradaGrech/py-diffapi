@@ -16,7 +16,7 @@ from api.diffusion_module.diffusor_provider import ModelProvider
 from dotenv import load_dotenv
 import os
 load_dotenv()
-print("-- HF KEY --", os.environ["HF_KEY"])
+
 origins = [
     "http://localhost",
     "http://localhost:4200",
@@ -29,8 +29,8 @@ async def lifespan(app: FastAPI):
     initial_integration:str = default_integration_name
     model_singleton = ModelProvider(app, 
         integration_name=initial_integration, 
-        with_cached_diffusor=True, 
-        with_auto_offload=True if initial_integration == "stablediffusion" else False,
+        with_cached_diffusor=False, 
+        with_auto_offload=False if initial_integration == "stablediffusion" else False,
         quantization=default_quant_type)
     
     #model_singleton.set_model(model_name="llama3.1:8b", provider="ollama", cpu_threads=6, verbose=True, ctx_len=4096, ngl=4352)
